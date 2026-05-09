@@ -1,7 +1,7 @@
 "use client";
 
 import jsPDF from "jspdf";
-
+import Link from "next/link";
 import autoTable from "jspdf-autotable";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
@@ -99,14 +99,14 @@ function Navbar({ menuOpen, setMenuOpen }: { menuOpen: boolean; setMenuOpen: (v:
         }`}
       >
         <div className="max-w-6xl mx-auto px-5 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 group">
+          <Link href="/" className="flex items-center gap-2.5 group">
             <div className="w-8 h-8 rounded-lg bg-green-600 flex items-center justify-center shadow-sm group-hover:bg-green-700 transition-colors">
               <GraduationCap className="h-4 w-4 text-white" strokeWidth={2.5} />
             </div>
             <span className="font-bold text-slate-800 text-sm tracking-tight">
               KCET<span className="text-green-600">Predict</span>
             </span>
-          </a>
+          </Link>
 
           <nav className="hidden md:flex items-center gap-0.5">
             {["Predictor", "Colleges", "Cutoffs", "About"].map((item) => (
@@ -519,12 +519,13 @@ export default function PredictorPage() {
     } else {
 
       const enhancedResults = await Promise.all(
-        (data || []).map(async (college: any) => {
+        (data || []).map(async (college: Record<string, string | number>) => {
 
       try {
 
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
         const aiResponse = await fetch(
-          "http://127.0.0.1:8000/predict",
+          `${apiUrl}/predict`,
           {
             method: "POST",
             headers: {
@@ -575,7 +576,7 @@ export default function PredictorPage() {
     doc.text("KCET College Predictor Results", 14, 20);
     doc.setFontSize(11);
     doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
-    const tableData = results.map((college: any) => [
+    const tableData = results.map((college: Record<string, string | number>) => [
       college.college_name,
       college.branch_name,
       college.category,

@@ -9,7 +9,7 @@ export async function POST(req: Request) {
       message: "Prediction API working",
       data: body,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         success: false,
