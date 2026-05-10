@@ -33,8 +33,14 @@ app.add_middleware(
 
 # ── Load trained model ──────────────────────────────────────────────────────────
 MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
-model = joblib.load(os.path.join(MODEL_DIR, "kcet_model.pkl"))
-encoders = joblib.load(os.path.join(MODEL_DIR, "encoders.pkl"))
+
+
+model = None
+encoders = None
+
+if os.path.exists("kcet_model.pkl") and os.path.exists("encoders.pkl"):
+    model = joblib.load("kcet_model.pkl")
+    encoders = joblib.load("encoders.pkl")
 
 
 # ── Request schema ──────────────────────────────────────────────────────────────
@@ -79,8 +85,10 @@ def predict(data: PredictionRequest):
         columns=["year", "category", "quota", "branch_name", "college_name"],
     )
 
-    prediction = model.predict(features)
-
-    return {
-        "predicted_cutoff": int(prediction[0]),
+    if model is None:
+        return {
+            "message": "Model not deployed yet",
+            "predicted_cutoff": 0
     }
+
+prediction = model.predict(features)
