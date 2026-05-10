@@ -71,7 +71,6 @@ def health():
     return {
         "status": "ok"
     }
-
 @app.post("/predict")
 def predict(data: PredictionRequest):
 
