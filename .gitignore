@@ -4,5 +4,3 @@ venv
 __pycache__
 .env.local
 
-ml/kcet_model.pkl
-ml/encoders.pkl
