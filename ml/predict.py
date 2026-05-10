@@ -7,7 +7,7 @@ import os
 
 app = FastAPI(
     title="KCET ML Prediction API",
-    description="RandomForest-based cutoff predictor for KCET counselling",
+    description="HistGradientBoosting-based cutoff predictor for KCET counselling",
     version="1.0.0",
 )
 
@@ -25,7 +25,7 @@ if vercel_url:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,6 +56,16 @@ class PredictionRequest(BaseModel):
     branch_name: str
     college_name: str
 
+# ── SAFE TRANSFORM FUNCTION ─────────────────────────────────────────
+
+def safe_transform(encoder, value):
+    value = str(value).strip()
+
+    if value not in encoder.classes_:
+        return 0
+
+    return encoder.transform([value])[0]
+
 # ── ROUTES ──────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -71,10 +81,11 @@ def health():
     return {
         "status": "ok"
     }
+
 @app.post("/predict")
 def predict(data: PredictionRequest):
 
-    # Temporary fallback until ML model is deployed
+    # Fallback if model not loaded
     if model is None or encoders is None:
         return {
             "message": "ML model not deployed yet",
@@ -82,19 +93,42 @@ def predict(data: PredictionRequest):
         }
 
     try:
-        category = encoders["category"].transform([data.category])[0]
-        quota = encoders["quota"].transform([data.quota])[0]
-        branch = encoders["branch_name"].transform([data.branch_name])[0]
-        college = encoders["college_name"].transform([data.college_name])[0]
-
-    except (ValueError, KeyError) as e:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unknown label for encoder: {str(e)}",
+        category = safe_transform(
+            encoders["category"],
+            data.category
         )
 
+        quota = safe_transform(
+            encoders["quota"],
+            data.quota
+        )
+
+        branch = safe_transform(
+            encoders["branch_name"],
+            data.branch_name
+        )
+
+        college = safe_transform(
+            encoders["college_name"],
+            data.college_name
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Encoding error: {str(e)}",
+        )
+
+    # ── CREATE FEATURE DATAFRAME ────────────────────────────────────
+
     features = pd.DataFrame(
-        [[data.year, category, quota, branch, college]],
+        [[
+            data.year,
+            category,
+            quota,
+            branch,
+            college
+        ]],
         columns=[
             "year",
             "category",
@@ -104,8 +138,11 @@ def predict(data: PredictionRequest):
         ],
     )
 
+    # ── PREDICT ─────────────────────────────────────────────────────
+
     prediction = model.predict(features)
 
     return {
-        "predicted_cutoff": int(prediction[0])
+        "predicted_cutoff": int(prediction[0]),
+        "model_used": "HistGradientBoostingRegressor"
     }
