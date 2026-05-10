@@ -4,8 +4,8 @@ import joblib
 model = joblib.load("kcet_model.pkl")
 encoders = joblib.load("encoders.pkl")
 
-# Save compressed versions
-joblib.dump(model, "kcet_model_small.pkl", compress=3)
-joblib.dump(encoders, "encoders_small.pkl", compress=3)
+# Save ultra compressed versions
+joblib.dump(model, "kcet_model_ultra.pkl", compress=9)
+joblib.dump(encoders, "encoders_ultra.pkl", compress=9)
 
-print("Compressed successfully!")
+print("Ultra compressed successfully!")
