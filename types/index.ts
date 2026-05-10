@@ -63,3 +63,14 @@ export interface MLResponse {
   predicted_cutoff: number
   model_used?: string
 }
+export interface CollegeResult {
+  id?: number
+  college_name: string
+  branch_name: string
+  category: string
+  quota: string
+  cutoff_rank: number
+  city?: string
+  ai_prediction?: number
+  prediction_source?: string
+}
