@@ -28,10 +28,6 @@ import {
   Loader2,
   SlidersHorizontal,
   BookOpen,
-  Brain,
-  Sparkles,
-  ShieldCheck,
-  Target,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -238,14 +234,6 @@ function EmptyState({ rank }: { rank: string }) {
   );
 }
 
-// ─── ML Confidence Dots ───────────────────────────────────────────────────────
-
-const CONFIDENCE_CONFIG = {
-  high: { label: "High", color: "bg-green-400" },
-  medium: { label: "Med", color: "bg-amber-400" },
-  low: { label: "Low", color: "bg-slate-300" },
-};
-
 // ─── College Card ─────────────────────────────────────────────────────────────
 
 function CollegeCard({
@@ -259,8 +247,6 @@ function CollegeCard({
 }) {
   const badge = getChanceBadge(userRank, item.cutoff_rank);
   const cfg = BADGE_CONFIG[badge];
-  const ml = item.ml;
-  const mlChanceCfg = ml ? BADGE_CONFIG[ml.chance] : null;
 
   return (
     <div className="group relative rounded-xl border border-slate-100 bg-white p-5 hover:border-green-200 hover:shadow-md transition-all duration-200 cursor-default">
@@ -310,35 +296,6 @@ function CollegeCard({
           )}
         </div>
       </div>
-
-      {/* ── ML Insight Row ─────────────────────────────────────────────── */}
-      {ml && (
-        <div className="mt-3 pt-3 border-t border-slate-50 flex flex-wrap items-center gap-3">
-          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
-            <Brain className="h-3.5 w-3.5 text-violet-500" />
-            AI Insight
-          </div>
-
-          <div className="inline-flex items-center gap-1.5 bg-violet-50 text-violet-700 px-2.5 py-1 rounded-lg border border-violet-100 text-[11px] font-semibold">
-            <Sparkles className="h-3 w-3" />
-            Predicted: {ml.predicted_cutoff.toLocaleString()}
-          </div>
-
-          {mlChanceCfg && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${mlChanceCfg.classes}`}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${mlChanceCfg.dot}`} />
-              AI: {mlChanceCfg.label}
-            </span>
-          )}
-
-          <div className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
-            <span className={`h-1.5 w-1.5 rounded-full ${CONFIDENCE_CONFIG[ml.confidence].color}`} />
-            {CONFIDENCE_CONFIG[ml.confidence].label} confidence
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -497,7 +454,6 @@ function CategoryDropdown({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function PredictorPage() {
-  // ── State (original logic preserved) ────────────────────────────────
   const [city, setCity] = useState("all");
   const [year, setYear] = useState("all");
   const [rank, setRank] = useState("");
@@ -505,8 +461,6 @@ export default function PredictorPage() {
   const [branch, setBranch] = useState("all");
   const [results, setResults] = useState<CollegeResult[]>([]);
   const [loading, setLoading] = useState(false);
-  // ─────────────────────────────────────────────────────────────────────
- 
   const [hasSearched, setHasSearched] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [rankFocused, setRankFocused] = useState(false);
@@ -517,11 +471,7 @@ export default function PredictorPage() {
   const [quota, setQuota] = useState("GM");
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  // ── ML-specific state ─────────────────────────────────────────────────
-  const [mlLoading, setMlLoading] = useState(false);
-  const [mlSummary, setMlSummary] = useState<MLSummaryStats | null>(null);
-
-  // ── Hybrid Prediction: Supabase first → ML enrichment ─────────────────
+  // ── Prediction: Supabase fetch → ML enrichment ────────────────────────────
   async function predictColleges() {
     setInputError("");
 
@@ -532,9 +482,9 @@ export default function PredictorPage() {
 
     setLoading(true);
     setHasSearched(true);
-    setMlSummary(null);
+    setResults([]);
 
-    // ── Step 1: Fetch historical data from Supabase (all filters intact) ──
+    // Step 1: Fetch historical data from Supabase
     let query = supabase
       .from("raw_cutoffs")
       .select("*")
@@ -548,6 +498,7 @@ export default function PredictorPage() {
     if (city !== "all") {
       query = query.ilike("college_name", `%${city}%`);
     }
+
     const { data, error } = await query
       .gte("cutoff_rank", Number(rank))
       .order("cutoff_rank", { ascending: true })
@@ -560,21 +511,36 @@ export default function PredictorPage() {
       return;
     }
 
-    // Show Supabase results immediately (no ML yet)
     const baseResults: CollegeResult[] = (data || []).map((row) => ({
       ...row,
       ml: null,
     }));
-    setResults(baseResults);
-    setLoading(false);
 
-    // ── Step 2: Enrich with ML predictions in the background ──────────
+    // Step 2: Enrich with ML predictions from Render API
+    const enriched = await Promise.all(
+      baseResults.map(async (item) => {
+        const predicted = await predictCutoff({
+          year: item.year ?? 2024,
+          category: item.category,
+          quota: item.quota,
+          branch_name: item.branch_name,
+          college_name: item.college_name,
+        });
+        return {
+          ...item,
+          cutoff_rank: predicted ?? item.cutoff_rank,
+        };
+      })
+    );
+
+    enriched.sort((a, b) => a.cutoff_rank - b.cutoff_rank);
+    setResults(enriched);
+    setLoading(false);
 
     setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
   }
-  // ─────────────────────────────────────────────────────────────────────
 
   const downloadPDF = () => {
     const doc = new jsPDF();
@@ -589,13 +555,12 @@ export default function PredictorPage() {
       college.category,
       college.quota,
       college.cutoff_rank,
-      college.ml?.predicted_cutoff ?? "—",
-      college.ml?.chance?.toUpperCase() ?? "—",
-      college.year,
+      getChanceBadge(Number(rank), college.cutoff_rank).toUpperCase(),
+      college.year ?? "—",
     ]);
     autoTable(doc, {
       startY: 44,
-      head: [["College", "Branch", "Category", "Quota", "Cutoff", "AI Cutoff", "Chance", "Year"]],
+      head: [["College", "Branch", "Category", "Quota", "Cutoff", "Chance", "Year"]],
       body: tableData,
       styles: { fontSize: 8, cellPadding: 3 },
       headStyles: { fillColor: [22, 163, 74] },
@@ -604,8 +569,6 @@ export default function PredictorPage() {
   };
 
   return (
-  
-
     <main className="relative min-h-screen bg-slate-50 text-slate-800 overflow-x-hidden font-sans">
       {/* Subtle dot grid background */}
       <div className="fixed inset-0 z-0 pointer-events-none">
@@ -838,44 +801,6 @@ export default function PredictorPage() {
               </button>
             )}
           </div>
-
-          {/* ── ML Summary Banner ──────────────────────────────────────── */}
-          {mlLoading && (
-            <div className="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl bg-violet-50 border border-violet-100 animate-pulse">
-              <Loader2 className="h-4 w-4 text-violet-500 animate-spin" />
-              <span className="text-xs font-semibold text-violet-600">
-                AI is analyzing your colleges…
-              </span>
-            </div>
-          )}
-
-          {!mlLoading && mlSummary?.mlAvailable && (
-            <div className="mb-4 px-5 py-4 rounded-xl bg-gradient-to-r from-violet-50 via-white to-green-50 border border-slate-100 shadow-sm">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
-                    <Brain className="h-3.5 w-3.5 text-violet-600" />
-                  </div>
-                  <span className="text-xs font-bold text-slate-700">AI Insights</span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
-                    <span className="text-green-700">{mlSummary.safe} Safe</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    <Target className="h-3.5 w-3.5 text-amber-500" />
-                    <span className="text-amber-700">{mlSummary.moderate} Moderate</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    <Sparkles className="h-3.5 w-3.5 text-violet-500" />
-                    <span className="text-violet-700">{mlSummary.dream} Dream</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Loading skeletons */}
           {loading && (
