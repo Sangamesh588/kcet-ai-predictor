@@ -532,9 +532,22 @@ export default function PredictorPage() {
         };
       })
     );
+    const uniqueResults = Array.from(
+      new Map(
+        enriched.map((college) => [
+          `${college.college_name}-${college.branch_name}-${college.year}`,
+        college,
+        ])
+      ).values()
+    );
+
+    uniqueResults.sort(
+      (a, b) => a.cutoff_rank - b.cutoff_rank
+    );
+
 
     enriched.sort((a, b) => a.cutoff_rank - b.cutoff_rank);
-    setResults(enriched);
+    setResults(uniqueResults);
     setLoading(false);
 
     setTimeout(() => {
