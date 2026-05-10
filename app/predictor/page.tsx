@@ -5,11 +5,12 @@ import Link from "next/link";
 import autoTable from "jspdf-autotable";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import {
-  enrichWithMLPredictions,
-  computeMLSummary,
-} from "@/services/ml.service";
-import type { CollegeResult, ChanceBadge, MLSummaryStats } from "@/types";
+import { predictCutoff } from "@/services/ml.service";
+
+import type {
+  CollegeResult,
+  ChanceBadge,
+} from "@/types";
 import {
   Search,
   GraduationCap,
@@ -568,22 +569,6 @@ export default function PredictorPage() {
     setLoading(false);
 
     // ── Step 2: Enrich with ML predictions in the background ──────────
-    if (baseResults.length > 0) {
-      setMlLoading(true);
-      try {
-        const enriched = await enrichWithMLPredictions(
-          baseResults,
-          Number(rank)
-        );
-        setResults(enriched);
-        setMlSummary(computeMLSummary(enriched));
-      } catch (err) {
-        console.error("ML enrichment failed, keeping Supabase results", err);
-        // Results still show — just without ML insights
-      } finally {
-        setMlLoading(false);
-      }
-    }
 
     setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
