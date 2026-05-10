@@ -6,6 +6,11 @@ import autoTable from "jspdf-autotable";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import {
+  enrichWithMLPredictions,
+  computeMLSummary,
+} from "@/services/ml.service";
+import type { CollegeResult, ChanceBadge, MLSummaryStats } from "@/types";
+import {
   Search,
   GraduationCap,
   Trophy,
@@ -22,22 +27,11 @@ import {
   Loader2,
   SlidersHorizontal,
   BookOpen,
+  Brain,
+  Sparkles,
+  ShieldCheck,
+  Target,
 } from "lucide-react";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface CollegeResult {
-  id?: number;
-  college_name: string;
-  branch_name: string;
-  cutoff_rank: number;
-  category: string;
-  round?: number;
-  location?: string;
-  college_type?: string;
-}
-
-type ChanceBadge = "safe" | "moderate" | "dream";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -243,6 +237,14 @@ function EmptyState({ rank }: { rank: string }) {
   );
 }
 
+// ─── ML Confidence Dots ───────────────────────────────────────────────────────
+
+const CONFIDENCE_CONFIG = {
+  high: { label: "High", color: "bg-green-400" },
+  medium: { label: "Med", color: "bg-amber-400" },
+  low: { label: "Low", color: "bg-slate-300" },
+};
+
 // ─── College Card ─────────────────────────────────────────────────────────────
 
 function CollegeCard({
@@ -256,6 +258,8 @@ function CollegeCard({
 }) {
   const badge = getChanceBadge(userRank, item.cutoff_rank);
   const cfg = BADGE_CONFIG[badge];
+  const ml = item.ml;
+  const mlChanceCfg = ml ? BADGE_CONFIG[ml.chance] : null;
 
   return (
     <div className="group relative rounded-xl border border-slate-100 bg-white p-5 hover:border-green-200 hover:shadow-md transition-all duration-200 cursor-default">
@@ -305,6 +309,35 @@ function CollegeCard({
           )}
         </div>
       </div>
+
+      {/* ── ML Insight Row ─────────────────────────────────────────────── */}
+      {ml && (
+        <div className="mt-3 pt-3 border-t border-slate-50 flex flex-wrap items-center gap-3">
+          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+            <Brain className="h-3.5 w-3.5 text-violet-500" />
+            AI Insight
+          </div>
+
+          <div className="inline-flex items-center gap-1.5 bg-violet-50 text-violet-700 px-2.5 py-1 rounded-lg border border-violet-100 text-[11px] font-semibold">
+            <Sparkles className="h-3 w-3" />
+            Predicted: {ml.predicted_cutoff.toLocaleString()}
+          </div>
+
+          {mlChanceCfg && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${mlChanceCfg.classes}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${mlChanceCfg.dot}`} />
+              AI: {mlChanceCfg.label}
+            </span>
+          )}
+
+          <div className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
+            <span className={`h-1.5 w-1.5 rounded-full ${CONFIDENCE_CONFIG[ml.confidence].color}`} />
+            {CONFIDENCE_CONFIG[ml.confidence].label} confidence
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -483,10 +516,13 @@ export default function PredictorPage() {
   const [quota, setQuota] = useState("GM");
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  // ── Original Supabase logic — UNTOUCHED ──────────────────────────────
+  // ── ML-specific state ─────────────────────────────────────────────────
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlSummary, setMlSummary] = useState<MLSummaryStats | null>(null);
+
+  // ── Hybrid Prediction: Supabase first → ML enrichment ─────────────────
   async function predictColleges() {
     setInputError("");
-    
 
     if (!rank || isNaN(Number(rank)) || Number(rank) < 1) {
       setInputError("Please enter a valid rank (e.g. 5000)");
@@ -495,7 +531,9 @@ export default function PredictorPage() {
 
     setLoading(true);
     setHasSearched(true);
+    setMlSummary(null);
 
+    // ── Step 1: Fetch historical data from Supabase (all filters intact) ──
     let query = supabase
       .from("raw_cutoffs")
       .select("*")
@@ -516,53 +554,36 @@ export default function PredictorPage() {
 
     if (error) {
       console.error(error);
-    } else {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
 
-      const enhancedResults = await Promise.all(
-        (data || []).map(async (college: Record<string, string | number>) => {
-
-      try {
-
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-        const aiResponse = await fetch(
-          `${apiUrl}/predict`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              year: Number(college.year),
-              category: college.category,
-              quota: college.quota,
-              branch_name: college.branch_name,
-              college_name: college.college_name,
-            }),
-          }
-        );
-
-        const aiData = await aiResponse.json();
-
-        return {
-          ...college,
-          ai_cutoff: aiData.predicted_cutoff,
-        };
-
-      } catch (err) {
-
-        console.error("AI prediction failed", err);
-
-        return {
-          ...college,
-          ai_cutoff: null,
-        };
-      }
-    })
-  );
-
-  setResults(enhancedResults);
-}
+    // Show Supabase results immediately (no ML yet)
+    const baseResults: CollegeResult[] = (data || []).map((row) => ({
+      ...row,
+      ml: null,
+    }));
+    setResults(baseResults);
     setLoading(false);
+
+    // ── Step 2: Enrich with ML predictions in the background ──────────
+    if (baseResults.length > 0) {
+      setMlLoading(true);
+      try {
+        const enriched = await enrichWithMLPredictions(
+          baseResults,
+          Number(rank)
+        );
+        setResults(enriched);
+        setMlSummary(computeMLSummary(enriched));
+      } catch (err) {
+        console.error("ML enrichment failed, keeping Supabase results", err);
+        // Results still show — just without ML insights
+      } finally {
+        setMlLoading(false);
+      }
+    }
 
     setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -576,19 +597,22 @@ export default function PredictorPage() {
     doc.text("KCET College Predictor Results", 14, 20);
     doc.setFontSize(11);
     doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
-    const tableData = results.map((college: Record<string, string | number>) => [
+    doc.text(`Rank: ${rank} | Category: ${category} | Quota: ${quota}`, 14, 37);
+    const tableData = results.map((college) => [
       college.college_name,
       college.branch_name,
       college.category,
       college.quota,
       college.cutoff_rank,
+      college.ml?.predicted_cutoff ?? "—",
+      college.ml?.chance?.toUpperCase() ?? "—",
       college.year,
     ]);
     autoTable(doc, {
-      startY: 40,
-      head: [["College", "Branch", "Category", "Quota", "Cutoff", "Year"]],
+      startY: 44,
+      head: [["College", "Branch", "Category", "Quota", "Cutoff", "AI Cutoff", "Chance", "Year"]],
       body: tableData,
-      styles: { fontSize: 9, cellPadding: 3 },
+      styles: { fontSize: 8, cellPadding: 3 },
       headStyles: { fillColor: [22, 163, 74] },
     });
     doc.save("kcet-predictions.pdf");
@@ -829,6 +853,44 @@ export default function PredictorPage() {
               </button>
             )}
           </div>
+
+          {/* ── ML Summary Banner ──────────────────────────────────────── */}
+          {mlLoading && (
+            <div className="mb-4 flex items-center gap-3 px-5 py-3.5 rounded-xl bg-violet-50 border border-violet-100 animate-pulse">
+              <Loader2 className="h-4 w-4 text-violet-500 animate-spin" />
+              <span className="text-xs font-semibold text-violet-600">
+                AI is analyzing your colleges…
+              </span>
+            </div>
+          )}
+
+          {!mlLoading && mlSummary?.mlAvailable && (
+            <div className="mb-4 px-5 py-4 rounded-xl bg-gradient-to-r from-violet-50 via-white to-green-50 border border-slate-100 shadow-sm">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
+                    <Brain className="h-3.5 w-3.5 text-violet-600" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-700">AI Insights</span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                    <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
+                    <span className="text-green-700">{mlSummary.safe} Safe</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                    <Target className="h-3.5 w-3.5 text-amber-500" />
+                    <span className="text-amber-700">{mlSummary.moderate} Moderate</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                    <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                    <span className="text-violet-700">{mlSummary.dream} Dream</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Loading skeletons */}
           {loading && (
