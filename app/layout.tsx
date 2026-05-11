@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     "AI-powered KCET college predictor using real cutoff data and machine learning predictions.",
 
   verification: {
-    google: "PASTE_YOUR_GOOGLE_VERIFICATION_CODE_HERE",
+    google: "57j3Pfm17p0pt36OAtK4gw_tC7ZgohgYqj0lZO_Z2IE",
   },
 };
 
